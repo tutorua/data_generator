@@ -1,6 +1,7 @@
-from fastapi import FastAPI, Query, HTTPException
-from fastapi.responses import FileResponse
+import plotly.graph_objs as go
 from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse
+from fastapi import FastAPI, Query, HTTPException
 from pydantic import BaseModel, Field
 from typing import cast
 import numpy as np
@@ -62,7 +63,7 @@ def generate_and_save(dist_name: str, data: np.ndarray) -> dict:
     }
 
 
-# 🔹 Normal endpoint
+# Normal endpoint
 @app.get("/generate/normal")
 def generate_normal(
     loc: float = Query(config["distributions"]["normal"]["params"]["loc"]),
@@ -74,7 +75,8 @@ def generate_normal(
     path = generate_and_save("normal", data)
     return {"distribution": "normal", "file": path, "preview": data[:10].tolist()}
 
-# 🔹 Beta endpoint
+
+# Beta endpoint
 @app.get("/generate/beta")
 def generate_beta(
     a: float = Query(config["distributions"]["beta"]["params"]["a"]),
@@ -86,7 +88,8 @@ def generate_beta(
     path = generate_and_save("beta", data)
     return {"distribution": "beta", "file": path, "preview": data[:10].tolist()}
 
-# 🔹 Gamma endpoint
+
+# Gamma endpoint
 @app.get("/generate/gamma")
 def generate_gamma(
     a: float = Query(config["distributions"]["gamma"]["params"]["a"]),
@@ -101,24 +104,81 @@ def generate_gamma(
 
 
 @app.get("/preview/{dist_name}", response_class=HTMLResponse)
-def preview_distribution(dist_name: str):
+def preview_distribution(dist_name: str, page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100)):
+
     file_path = output_dir / f"{dist_name}.json"
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"No data found for '{dist_name}'")
 
-    with open(file_path) as f:
-        data = json.load(f)
+    # with open(file_path) as f:
+    #     data = json.load(f)
 
-    # Extract the actual number from the dict: {'gamma': 4.12} → 4.12
-    values = [row.get(dist_name, row) if isinstance(row, dict) else row for row in data[:20]]
+    # # Extract the actual number from the dict: {'gamma': 4.12} → 4.12
+    # values = [row.get(dist_name, row) if isinstance(row, dict) else row for row in data[:20]]
 
-    # Build HTML table
-    html = f"<h2>Preview: {dist_name.title()}</h2><table border='1'><tr><th>Index</th><th>Value</th></tr>"
-    for i, val in enumerate(values):
-        html += f"<tr><td>{i}</td><td>{val}</td></tr>"
+    # # Build HTML table
+    # html = f"<h2>Preview: {dist_name.title()}</h2><table border='1'><tr><th>Index</th><th>Value</th></tr>"
+    # for i, val in enumerate(values):
+    #     html += f"<tr><td>{i}</td><td>{val}</td></tr>"
+    # html += "</table>"
+    # return html
+
+    # Load and extract values
+    data = pd.read_json(file_path)
+    values = data[dist_name].tolist() if dist_name in data.columns else data.iloc[:, 0].tolist()
+
+    # Pagination
+    start = (page - 1) * size
+    end = start + size
+    paginated = values[start:end]
+
+    # Metadata
+    arr = np.array(values)
+    stats_html = f"""
+    <h3>Summary Stats</h3>
+    <ul>
+        <li>Count: {len(arr)}</li>
+        <li>Mean: {arr.mean():.4f}</li>
+        <li>Std Dev: {arr.std():.4f}</li>
+        <li>Min: {arr.min():.4f}</li>
+        <li>Max: {arr.max():.4f}</li>
+    </ul>
+    """
+
+    # Table
+    html = f"<h2>Preview: {dist_name.title()} (Page {page})</h2>" + stats_html
+    html += "<table border='1'><tr><th>Index</th><th>Value</th></tr>"
+    for i, val in enumerate(paginated, start=start):
+        html += f"<tr><td>{i}</td><td>{val:.6f}</td></tr>"
     html += "</table>"
-    return html
 
+    # Navigation
+    next_page = f"/preview/{dist_name}?page={page+1}&size={size}"
+    prev_page = f"/preview/{dist_name}?page={page-1}&size={size}" if page > 1 else None
+    nav_html = "<div style='margin-top: 1em;'>"
+    if prev_page:
+        nav_html += f"<a href='{prev_page}'>⏪ Previous</a> &nbsp;&nbsp;"
+    if end < len(values):
+        nav_html += f"<a href='{next_page}'>Next ⏩</a>"
+    nav_html += "</div>"
+
+    return html + nav_html
+
+
+@app.get("/plot/{dist_name}", response_class=HTMLResponse)
+def plot_distribution(dist_name: str):
+    file_path = output_dir / f"{dist_name}.json"
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="No data to plot.")
+
+    df = pd.read_json(file_path)
+    values = df[dist_name] if dist_name in df.columns else df.iloc[:, 0]
+
+    fig = go.Figure()
+    fig.add_trace(go.Histogram(x=values, nbinsx=50, marker_color="royalblue", name="Histogram"))
+    fig.update_layout(title=f"{dist_name.title()} Distribution", xaxis_title="Value", yaxis_title="Count")
+
+    return fig.to_html(full_html=True)
 
 
 @app.get("/download/{dist_name}.{ext}")
