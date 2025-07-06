@@ -4,12 +4,11 @@ import scipy.stats as stats
 import pandas as pd
 import yaml
 import json
-from fastapi.responses import HTMLResponse
-from fastapi.responses import FileResponse
+import os
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from fastapi import FastAPI, Query, HTTPException
 from pydantic import BaseModel, Field
-from typing import cast
-from typing import Optional
+from typing import cast, Optional
 from pathlib import Path
 
 app = FastAPI()
@@ -268,6 +267,31 @@ def plot_histogram_with_pdf(
     )
 
     return fig.to_html(full_html=True)
+
+
+# Basic HTML dashboard template
+@app.get("/", response_class=HTMLResponse)
+def dashboard():
+    existing = [f.stem for f in output_dir.glob("*.json")]
+
+    html = "<h1>📈 Data Generator Dashboard</h1>"
+    html += "<h3>Available Distributions</h3><ul>"
+
+    for dist in sorted(set(existing)):
+        html += f"""
+        <li>
+            <b>{dist.title()}</b> &nbsp;
+            [<a href='/preview/{dist}'>Preview</a>] &nbsp;
+            [<a href='/plot/histogram/{dist}?show_pdf=true'>Histogram+PDF</a>] &nbsp;
+            [<a href='/plot/pdf-cdf/{dist}'>PDF & CDF</a>] &nbsp;
+            [<a href='/download/{dist}.csv'>CSV</a>] &nbsp;
+            [<a href='/download/{dist}.json'>JSON</a>]
+        </li>
+        """
+
+    html += "</ul>"
+    html += "<p><i>Generate new data via `/generate/{distribution}` endpoints to see them here.</i></p>"
+    return html
 
 
 @app.get("/download/{dist_name}.{ext}")
