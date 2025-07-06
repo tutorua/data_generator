@@ -1,14 +1,14 @@
 import plotly.graph_objs as go
-from fastapi.responses import HTMLResponse
-from fastapi.responses import FileResponse
-from fastapi import FastAPI, Query, HTTPException
-from pydantic import BaseModel, Field
-from typing import cast
 import numpy as np
 import scipy.stats as stats
 import pandas as pd
 import yaml
 import json
+from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse
+from fastapi import FastAPI, Query, HTTPException
+from pydantic import BaseModel, Field
+from typing import cast
 from typing import Optional
 from pathlib import Path
 
@@ -44,6 +44,39 @@ class GammaParams(BaseModel):
     with open(file_path, "w") as f:
         json.dump(data.tolist(), f)
     return str(file_path) """
+
+# helper function to compute and plot both PDF and CDF
+# This function uses scipy's gaussian_kde for PDF estimation and numpy for CDF calculation
+
+def create_pdf_cdf_plot(values: list, dist_name: str) -> str:
+    arr = np.array(values)
+    x = np.linspace(arr.min(), arr.max(), 500)
+
+    # Estimate PDF using KDE
+    kde = stats.gaussian_kde(arr)
+    pdf_y = kde(x)
+
+    # Compute empirical CDF
+    sorted_vals = np.sort(arr)
+    cdf_y = np.arange(1, len(sorted_vals) + 1) / len(sorted_vals)
+
+    fig = go.Figure()
+
+    # PDF line
+    fig.add_trace(go.Scatter(x=x, y=pdf_y, mode="lines", name="PDF", line=dict(color="royalblue")))
+
+    # CDF line
+    fig.add_trace(go.Scatter(x=sorted_vals, y=cdf_y, mode="lines", name="CDF", line=dict(color="orange")))
+
+    fig.update_layout(
+        title=f"{dist_name.title()} - PDF & CDF",
+        xaxis_title="Value",
+        yaxis_title="Probability",
+        legend=dict(x=0.8, y=0.95),
+        height=500
+    )
+
+    return fig.to_html(full_html=True)
 
 
 def generate_and_save(dist_name: str, data: np.ndarray) -> dict:
@@ -113,16 +146,6 @@ def preview_distribution(dist_name: str, page: int = Query(1, ge=1), size: int =
     # with open(file_path) as f:
     #     data = json.load(f)
 
-    # # Extract the actual number from the dict: {'gamma': 4.12} → 4.12
-    # values = [row.get(dist_name, row) if isinstance(row, dict) else row for row in data[:20]]
-
-    # # Build HTML table
-    # html = f"<h2>Preview: {dist_name.title()}</h2><table border='1'><tr><th>Index</th><th>Value</th></tr>"
-    # for i, val in enumerate(values):
-    #     html += f"<tr><td>{i}</td><td>{val}</td></tr>"
-    # html += "</table>"
-    # return html
-
     # Load and extract values
     data = pd.read_json(file_path)
     values = data[dist_name].tolist() if dist_name in data.columns else data.iloc[:, 0].tolist()
@@ -145,7 +168,7 @@ def preview_distribution(dist_name: str, page: int = Query(1, ge=1), size: int =
     </ul>
     """
 
-    # Table
+    # Build HTML table
     html = f"<h2>Preview: {dist_name.title()} (Page {page})</h2>" + stats_html
     html += "<table border='1'><tr><th>Index</th><th>Value</th></tr>"
     for i, val in enumerate(paginated, start=start):
@@ -177,6 +200,72 @@ def plot_distribution(dist_name: str):
     fig = go.Figure()
     fig.add_trace(go.Histogram(x=values, nbinsx=50, marker_color="royalblue", name="Histogram"))
     fig.update_layout(title=f"{dist_name.title()} Distribution", xaxis_title="Value", yaxis_title="Count")
+
+    return fig.to_html(full_html=True)
+
+
+@app.get("/plot/pdf-cdf/{dist_name}", response_class=HTMLResponse)
+def plot_pdf_cdf(dist_name: str):
+    file_path = output_dir / f"{dist_name}.json"
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="No data to plot.")
+
+    df = pd.read_json(file_path)
+    values = df[dist_name] if dist_name in df.columns else df.iloc[:, 0]
+
+    return create_pdf_cdf_plot(values.tolist(), dist_name)
+
+
+# histogram + PDF overlay with a toggle to switch the PDF curve on or off
+@app.get("/plot/histogram/{dist_name}", response_class=HTMLResponse)
+def plot_histogram_with_pdf(
+    dist_name: str,
+    show_pdf: bool = Query(True, description="Toggle PDF overlay on/off")
+):
+    file_path = output_dir / f"{dist_name}.json"
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="No data to plot.")
+
+    df = pd.read_json(file_path)
+    values = df[dist_name] if dist_name in df.columns else df.iloc[:, 0]
+    arr = np.array(values)
+
+    fig = go.Figure()
+
+    # Histogram
+    fig.add_trace(go.Histogram(
+        x=arr,
+        nbinsx=50,
+        name="Histogram",
+        marker_color="lightsteelblue",
+        opacity=0.75
+    ))
+
+    # Optional PDF overlay
+    if show_pdf:
+        x = np.linspace(arr.min(), arr.max(), 500)
+        kde = stats.gaussian_kde(arr)
+        pdf_y = kde(x)
+
+        # Scale PDF to match histogram height
+        scale_factor = len(arr) * (arr.max() - arr.min()) / 50
+        pdf_y_scaled = pdf_y * scale_factor
+
+        fig.add_trace(go.Scatter(
+            x=x,
+            y=pdf_y_scaled,
+            mode="lines",
+            name="PDF",
+            line=dict(color="crimson", width=2)
+        ))
+
+    fig.update_layout(
+        title=f"{dist_name.title()} - Histogram {'+ PDF' if show_pdf else ''}",
+        xaxis_title="Value",
+        yaxis_title="Count",
+        barmode="overlay",
+        height=500
+    )
 
     return fig.to_html(full_html=True)
 
