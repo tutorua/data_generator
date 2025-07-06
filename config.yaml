@@ -1,0 +1,21 @@
+distributions:
+  normal:
+    dist: norm
+    params:
+      loc: 0
+      scale: 1
+      size: 1000
+
+  beta:
+    dist: beta
+    params:
+      a: 2
+      b: 5
+      size: 1000
+
+  gamma:
+    dist: gamma
+    params:
+      a: 2
+      scale: 2
+      size: 1000
