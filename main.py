@@ -81,18 +81,24 @@ def create_pdf_cdf_plot(values: list, dist_name: str) -> str:
 def generate_and_save(dist_name: str, data: np.ndarray) -> dict:
     output_dir.mkdir(exist_ok=True)
     
-    df = pd.DataFrame(data, columns=[dist_name])
+    # Save YAML in flow style (compact list)
+    yaml_path = output_dir / f"{dist_name}.yaml"
+    with open(yaml_path, "w") as f:
+        # wrap the output every few (4) items for readability
+        # yaml.dump(data.tolist(), f, default_flow_style=True)
+        # Ensure the YAML file is saved in a single line
+        yaml.dump(data.tolist(), f, default_flow_style=True, width=float("inf"))
+    
 
-    json_path = output_dir / f"{dist_name}.json"
+    # Save CSV for consistency
     csv_path = output_dir / f"{dist_name}.csv"
-
-    df.to_json(json_path, orient="records")
-    df.to_csv(csv_path, index=False)
+    pd.DataFrame(data, columns=[dist_name]).to_csv(csv_path, index=False)
 
     return {
-        "json_file": str(json_path),
+        "yaml_file": str(yaml_path),
         "csv_file": str(csv_path)
     }
+
 
 
 # Normal endpoint
@@ -271,8 +277,8 @@ def plot_histogram_with_pdf(
 
 @app.get("/download/{dist_name}.{ext}")
 def download_data(dist_name: str, ext: str):
-    if ext not in ("csv", "json"):
-        raise HTTPException(status_code=400, detail="Only .csv and .json supported")
+    if ext not in ("csv", "yaml"):
+        raise HTTPException(status_code=400, detail="Only .csv and .yaml supported")
 
     file_path = output_dir / f"{dist_name}.{ext}"
     if not file_path.exists():
@@ -281,28 +287,62 @@ def download_data(dist_name: str, ext: str):
     return FileResponse(path=file_path, filename=file_path.name, media_type="application/octet-stream")
 
 
-# Basic HTML dashboard template
+# Enhanced HTML dashboard template
 @app.get("/", response_class=HTMLResponse)
 def dashboard():
-    existing = [f.stem for f in output_dir.glob("*.json")]
+    existing = sorted({f.stem for f in output_dir.glob("*.yaml")})
 
-    html = "<h1>📈 Data Generator Dashboard</h1>"
-    html += "<h3>Available Distributions</h3><ul>"
+    html = """
+    <html>
+    <head>
+        <title>📊 Data Generator Dashboard</title>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    </head>
+    <body class="p-4">
+        <div class="container">
+            <h1 class="mb-4">📊 Data Generator Dashboard</h1>
+            
+            <h3>🎲 Generate New Distribution</h3>
+            <form action="/generate-ui" method="post" class="row g-3 mb-5">
+                <div class="col-md-3">
+                    <label class="form-label">Distribution</label>
+                    <select name="dist" class="form-select">
+                        <option value="normal">Normal</option>
+                        <option value="beta">Beta</option>
+                        <option value="gamma">Gamma</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Param 1 (e.g. loc / a)</label>
+                    <input type="text" name="param1" class="form-control" required>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Param 2 (e.g. scale / b)</label>
+                    <input type="text" name="param2" class="form-control">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Size</label>
+                    <input type="number" name="size" class="form-control" value="1000" required>
+                </div>
+                <div class="col-md-2 align-self-end">
+                    <button type="submit" class="btn btn-primary w-100">Generate</button>
+                </div>
+            </form>
+    """
 
-    for dist in sorted(set(existing)):
+    html += "<h3>📁 Available Datasets</h3><ul class='list-group'>"
+    for dist in existing:
         html += f"""
-        <li>
-            <b>{dist.title()}</b> &nbsp;
-            [<a href='/preview/{dist}'>Preview</a>] &nbsp;
-            [<a href='/plot/histogram/{dist}?show_pdf=true'>Histogram+PDF</a>] &nbsp;
-            [<a href='/plot/pdf-cdf/{dist}'>PDF & CDF</a>] &nbsp;
-            [<a href='/download/{dist}.csv'>CSV</a>] &nbsp;
-            [<a href='/download/{dist}.json'>JSON</a>]
-        </li>
+            <li class="list-group-item">
+                <strong>{dist.title()}</strong> &nbsp;
+                <a href='/preview/{dist}'>🔍 Preview</a> &nbsp;
+                <a href='/plot/histogram/{dist}?show_pdf=true'>📊 Histogram + PDF</a> &nbsp;
+                <a href='/plot/pdf-cdf/{dist}'>📈 PDF & CDF</a> &nbsp;
+                <a href='/download/{dist}.csv'>⬇️ CSV</a> &nbsp;
+                <a href='/download/{dist}.yaml'>⬇️ YAML</a>
+            </li>
         """
-
-    html += "</ul>"
-    html += "<p><i>Generate new data via `/generate/{distribution}` endpoints to see them here.</i></p>"
+    html += "</ul></div></body></html>"
     return html
 
 
@@ -377,7 +417,7 @@ def handle_form_submission(
             <li><a href="/plot/histogram/{dist}?show_pdf=true">📊 Histogram + PDF</a></li>
             <li><a href="/plot/pdf-cdf/{dist}">📈 PDF & CDF</a></li>
             <li><a href="/download/{dist}.csv">⬇️ Download CSV</a></li>
-            <li><a href="/download/{dist}.json">⬇️ Download JSON</a></li>
+            <li><a href="/download/{dist}.yaml">⬇️ Download YAML</a></li>
         </ul>
         <a href="/generate-ui">← Back to form</a>
         </body></html>
