@@ -3,7 +3,6 @@ import numpy as np
 import scipy.stats as stats
 import pandas as pd
 import yaml
-import json
 import os
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from fastapi import FastAPI, Query, HTTPException, Form
@@ -38,12 +37,6 @@ class GammaParams(BaseModel):
     size: int = Field(1000, gt=0, le=100000)
 
 # 🔧 Utility to generate and save data
-""" def generate_and_save(dist_name: str, data: np.ndarray) -> str:
-    file_path = output_dir / f"{dist_name}.json"
-    with open(file_path, "w") as f:
-        json.dump(data.tolist(), f)
-    return str(file_path) """
-
 # helper function to compute and plot both PDF and CDF
 # This function uses scipy's gaussian_kde for PDF estimation and numpy for CDF calculation
 
@@ -142,25 +135,20 @@ def generate_gamma(
 
 
 @app.get("/preview/{dist_name}", response_class=HTMLResponse)
-def preview_distribution(dist_name: str, page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100)):
-
-    file_path = output_dir / f"{dist_name}.json"
+def preview_distribution(dist_name: str, page: int = 1, size: int = 20):
+    file_path = output_dir / f"{dist_name}.csv"
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail=f"No data found for '{dist_name}'")
+        raise HTTPException(status_code=404, detail="CSV not found")
 
-    # with open(file_path) as f:
-    #     data = json.load(f)
-
-    # Load and extract values
-    data = pd.read_json(file_path)
-    values = data[dist_name].tolist() if dist_name in data.columns else data.iloc[:, 0].tolist()
+    df = pd.read_csv(file_path)
+    values = df[dist_name].tolist()
 
     # Pagination
     start = (page - 1) * size
     end = start + size
     paginated = values[start:end]
 
-    # Metadata
+    # Stats
     arr = np.array(values)
     stats_html = f"""
     <h3>Summary Stats</h3>
@@ -173,7 +161,7 @@ def preview_distribution(dist_name: str, page: int = Query(1, ge=1), size: int =
     </ul>
     """
 
-    # Build HTML table
+    # Table
     html = f"<h2>Preview: {dist_name.title()} (Page {page})</h2>" + stats_html
     html += "<table border='1'><tr><th>Index</th><th>Value</th></tr>"
     for i, val in enumerate(paginated, start=start):
@@ -181,13 +169,11 @@ def preview_distribution(dist_name: str, page: int = Query(1, ge=1), size: int =
     html += "</table>"
 
     # Navigation
-    next_page = f"/preview/{dist_name}?page={page+1}&size={size}"
-    prev_page = f"/preview/{dist_name}?page={page-1}&size={size}" if page > 1 else None
     nav_html = "<div style='margin-top: 1em;'>"
-    if prev_page:
-        nav_html += f"<a href='{prev_page}'>⏪ Previous</a> &nbsp;&nbsp;"
+    if start > 0:
+        nav_html += f"<a href='/preview/{dist_name}?page={page-1}&size={size}'>⏪ Previous</a> &nbsp;"
     if end < len(values):
-        nav_html += f"<a href='{next_page}'>Next ⏩</a>"
+        nav_html += f"<a href='/preview/{dist_name}?page={page+1}&size={size}'>Next ⏩</a>"
     nav_html += "</div>"
 
     return html + nav_html
@@ -195,12 +181,13 @@ def preview_distribution(dist_name: str, page: int = Query(1, ge=1), size: int =
 
 @app.get("/plot/{dist_name}", response_class=HTMLResponse)
 def plot_distribution(dist_name: str):
-    file_path = output_dir / f"{dist_name}.json"
+    file_path = output_dir / f"{dist_name}.csv"
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="No data to plot.")
 
-    df = pd.read_json(file_path)
-    values = df[dist_name] if dist_name in df.columns else df.iloc[:, 0]
+    df = pd.read_csv(output_dir / f"{dist_name}.csv")
+    values = df[dist_name].tolist()
+
 
     fig = go.Figure()
     fig.add_trace(go.Histogram(x=values, nbinsx=50, marker_color="royalblue", name="Histogram"))
@@ -211,14 +198,14 @@ def plot_distribution(dist_name: str):
 
 @app.get("/plot/pdf-cdf/{dist_name}", response_class=HTMLResponse)
 def plot_pdf_cdf(dist_name: str):
-    file_path = output_dir / f"{dist_name}.json"
+    file_path = output_dir / f"{dist_name}.csv"
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="No data to plot.")
 
-    df = pd.read_json(file_path)
-    values = df[dist_name] if dist_name in df.columns else df.iloc[:, 0]
+    df = pd.read_csv(output_dir / f"{dist_name}.csv")
+    values = df[dist_name].tolist()
 
-    return create_pdf_cdf_plot(values.tolist(), dist_name)
+    return create_pdf_cdf_plot(values, dist_name)
 
 
 # histogram + PDF overlay with a toggle to switch the PDF curve on or off
@@ -227,12 +214,12 @@ def plot_histogram_with_pdf(
     dist_name: str,
     show_pdf: bool = Query(True, description="Toggle PDF overlay on/off")
 ):
-    file_path = output_dir / f"{dist_name}.json"
+    file_path = output_dir / f"{dist_name}.csv"
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="No data to plot.")
 
-    df = pd.read_json(file_path)
-    values = df[dist_name] if dist_name in df.columns else df.iloc[:, 0]
+    df = pd.read_csv(output_dir / f"{dist_name}.csv")
+    values = df[dist_name].tolist()
     arr = np.array(values)
 
     fig = go.Figure()
