@@ -10,3 +10,6 @@ http://localhost:8000/generate/betta
 http://localhost:8000/generate/beta?a=3&b=2&size=300
 http://localhost:8000/generate/gamma
 http://localhost:8000/generate/gamma?a=3&scale=2&size=200
+
+or use UI at:
+http://localhost:8000/generate-ui

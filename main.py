@@ -6,7 +6,7 @@ import yaml
 import json
 import os
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Form
 from pydantic import BaseModel, Field
 from typing import cast, Optional
 from pathlib import Path
@@ -269,6 +269,18 @@ def plot_histogram_with_pdf(
     return fig.to_html(full_html=True)
 
 
+@app.get("/download/{dist_name}.{ext}")
+def download_data(dist_name: str, ext: str):
+    if ext not in ("csv", "json"):
+        raise HTTPException(status_code=400, detail="Only .csv and .json supported")
+
+    file_path = output_dir / f"{dist_name}.{ext}"
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return FileResponse(path=file_path, filename=file_path.name, media_type="application/octet-stream")
+
+
 # Basic HTML dashboard template
 @app.get("/", response_class=HTMLResponse)
 def dashboard():
@@ -294,13 +306,82 @@ def dashboard():
     return html
 
 
-@app.get("/download/{dist_name}.{ext}")
-def download_data(dist_name: str, ext: str):
-    if ext not in ("csv", "json"):
-        raise HTTPException(status_code=400, detail="Only .csv and .json supported")
+# Bootstrap-Enhanced HTML form
+@app.get("/generate-ui", response_class=HTMLResponse)
+def generate_ui_form():
+    return """
+    <html>
+    <head>
+        <title>Generate Distribution</title>
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    </head>
+    <body class="p-4">
+        <div class="container">
+            <h2 class="mb-4">🎲 Generate Distribution</h2>
+            <form action="/generate-ui" method="post" class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">Distribution</label>
+                    <select name="dist" class="form-select">
+                        <option value="normal">Normal</option>
+                        <option value="beta">Beta</option>
+                        <option value="gamma">Gamma</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Param 1 (e.g. loc / a)</label>
+                    <input type="text" name="param1" class="form-control" required>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Param 2 (e.g. scale / b)</label>
+                    <input type="text" name="param2" class="form-control">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Size</label>
+                    <input type="number" name="size" class="form-control" value="1000" required>
+                </div>
+                <div class="col-md-2 align-self-end">
+                    <button type="submit" class="btn btn-primary w-100">Generate</button>
+                </div>
+            </form>
+        </div>
+    </body>
+    </html>
+    """
 
-    file_path = output_dir / f"{dist_name}.{ext}"
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="File not found")
 
-    return FileResponse(path=file_path, filename=file_path.name, media_type="application/octet-stream")
+# POST handler for form submission
+@app.post("/generate-ui", response_class=HTMLResponse)
+def handle_form_submission(
+    dist: str = Form(...),
+    param1: float = Form(...),
+    param2: float = Form(None),
+    size: int = Form(...)
+):
+    try:
+        if dist == "normal":
+            data = stats.norm.rvs(loc=param1, scale=param2 or 1.0, size=size)
+        elif dist == "beta":
+            data = stats.beta.rvs(a=param1, b=param2 or 1.0, size=size)
+        elif dist == "gamma":
+            data = stats.gamma.rvs(a=param1, scale=param2 or 1.0, size=size)
+        else:
+            raise ValueError("Unsupported distribution")
+
+        paths = generate_and_save(dist, np.asarray(data))
+
+        return f"""
+        <html><body class="p-4">
+        <h3>{dist.title()} distribution generated!</h3>
+        <ul>
+            <li><a href="/preview/{dist}">🔍 Preview</a></li>
+            <li><a href="/plot/histogram/{dist}?show_pdf=true">📊 Histogram + PDF</a></li>
+            <li><a href="/plot/pdf-cdf/{dist}">📈 PDF & CDF</a></li>
+            <li><a href="/download/{dist}.csv">⬇️ Download CSV</a></li>
+            <li><a href="/download/{dist}.json">⬇️ Download JSON</a></li>
+        </ul>
+        <a href="/generate-ui">← Back to form</a>
+        </body></html>
+        """
+    except Exception as e:
+        return f"<h3>Error: {e}</h3><a href='/generate-ui'>Try again</a>"
+    
